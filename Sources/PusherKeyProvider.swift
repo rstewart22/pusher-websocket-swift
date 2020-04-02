@@ -1,14 +1,47 @@
+import Foundation
 
-protocol PusherKeyProviding {
-    var decryptionKey: String { get }
+protocol PusherKeyProvider: AnyObject {
+    
+    var delegate: PusherKeyProviderDelegate? { get set }
+    
+    func decryptionKey(forChannelName channelName: String) -> String?
+    func setDecryptionKey(_ decryptionKey: String, forChannelName channelName: String)
+    func clearDecryptionKey(forChannelName channelName: String)
+    
 }
 
-class PusherKeyProvider: PusherKeyProviding {
+// MARK: - Concrete implementation
+
+class PusherConcreteKeyProvider: PusherKeyProvider {
     
-    let decryptionKey: String
+    // MARK: - Properties
     
-    init(decryptionKey: String) {
-        self.decryptionKey = decryptionKey
+    private var decryptionKeys: [String : String] = [:]
+    
+    weak var delegate: PusherKeyProviderDelegate?
+    
+    // MARK: - Key provider
+    
+    func decryptionKey(forChannelName channelName: String) -> String? {
+        return self.decryptionKeys[channelName]
     }
+    
+    func setDecryptionKey(_ decryptionKey: String, forChannelName channelName: String) {
+        self.decryptionKeys[channelName] = decryptionKey
+        self.delegate?.keyProvider(self, didUpdateDecryptionKeyForChannelName: channelName)
+    }
+    
+    func clearDecryptionKey(forChannelName channelName: String) {
+        self.decryptionKeys.removeValue(forKey: channelName)
+        self.delegate?.keyProvider(self, didUpdateDecryptionKeyForChannelName: channelName)
+    }
+    
+}
+
+// MARK: - Delegate
+
+protocol PusherKeyProviderDelegate: AnyObject {
+    
+    func keyProvider(_ keyProvider: PusherKeyProvider, didUpdateDecryptionKeyForChannelName channelName: String)
     
 }

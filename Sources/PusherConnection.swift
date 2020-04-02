@@ -24,7 +24,9 @@ import Starscream
     var pongResponseTimeoutTimer: Timer? = nil
     var activityTimeoutTimer: Timer? = nil
     var intentionalDisconnect: Bool = false
-    private var keyProviders: [String : PusherKeyProviding] = [:]
+    
+    var eventFactory: PusherEventFactory = PusherConcreteEventFactory()
+    var keyProvider: PusherKeyProvider = PusherConcreteKeyProvider()
 
     var socketConnected: Bool = false {
         didSet {
@@ -592,14 +594,20 @@ import Starscream
             "channel": channelName,
             "data": data ?? ""
         ]
-        let keyProvider = self.keyProvider(forChannel: channelName)
-        let event = PusherEvent(jsonObject: json, keyProvider: keyProvider)!
-        DispatchQueue.main.async {
-            // TODO: Consider removing in favour of exclusively using delegate
-            self.handleEvent(event: event)
-        }
+        let decryptionKey = self.keyProvider.decryptionKey(forChannelName: channelName)
+        
+        do {
+            let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: decryptionKey)
+            
+            DispatchQueue.main.async {
+                // TODO: Consider removing in favour of exclusively using delegate
+                self.handleEvent(event: event)
+            }
 
-        self.delegate?.failedToSubscribeToChannel?(name: channelName, response: response, data: data, error: error)
+            self.delegate?.failedToSubscribeToChannel?(name: channelName, response: response, data: data, error: error)
+        } catch {
+            // TODO: Error handling.
+        }
     }
     
     /**
@@ -838,8 +846,8 @@ import Starscream
         json: [String: AnyObject],
         channel: PusherChannel
     ) {
-        if let key = json["shared_secret"] as? String {
-            self.store(key: key, forChannel: channel)
+        if let decryptionKey = json["shared_secret"] as? String {
+            self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
         }
         
         if let auth = json["auth"] as? String {
@@ -904,25 +912,6 @@ import Starscream
                 "auth": auth
             ]
         )
-    }
-    
-    /**
-        Retrieves key provider for encrypted private channel
-
-        - parameter channel: The PusherChannel to retrieve the key provider for
-    */
-    func keyProvider(forChannel channelName: String) -> PusherKeyProviding? {
-        return self.keyProviders[channelName]
-    }
-    
-    /**
-        Stores decryption key for encrypted private channel
-
-        - parameter key:     The decryption key
-        - parameter channel: The PusherChannel to store the decryption key for
-    */
-    private func store(key: String, forChannel channel: PusherChannel) {
-        self.keyProviders[channel.name] = PusherKeyProvider(decryptionKey: key)
     }
     
 }
