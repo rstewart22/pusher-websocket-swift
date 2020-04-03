@@ -25,8 +25,7 @@ import Starscream
     var activityTimeoutTimer: Timer? = nil
     var intentionalDisconnect: Bool = false
     
-    var eventFactory: PusherEventFactory = PusherConcreteEventFactory()
-    var keyProvider: PusherKeyProvider = PusherConcreteKeyProvider()
+    let eventQueue: PusherEventQueue
 
     var socketConnected: Bool = false {
         didSet {
@@ -108,7 +107,15 @@ import Starscream
         self.URLSession = URLSession
         self.socket = socket
         self.activityTimeoutInterval = options.activityTimeout ?? 60
+        
+        let eventFactory = PusherConcreteEventFactory()
+        let keyProvider = PusherConcreteKeyProvider()
+        
+        self.eventQueue = PusherConcreteEventQueue(eventFactory: eventFactory, keyProvider: keyProvider)
+        self.eventQueue.delegate = self
+        
         super.init()
+        
         self.socket.delegate = self
         self.socket.pongDelegate = self
     }
