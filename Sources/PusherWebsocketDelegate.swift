@@ -26,17 +26,7 @@ extension PusherConnection: WebSocketDelegate {
             }
             self.handleError(error: error)
         } else {
-            var decryptionKey: String? = nil
-            if let channelName = payload["channel"] as? String {
-                decryptionKey = self.keyProvider.decryptionKey(forChannelName: channelName)
-            }
-            
-            guard let event = try? self.eventFactory.makeEvent(fromJSON: payload, withDecryptionKey: decryptionKey) else {
-                // TODO: Error handling.
-                self.delegate?.debugLog?(message: "[PUSHER DEBUG] Unable to handle incoming event \(text)")
-                return
-            }
-            self.handleEvent(event: event)
+            self.eventQueue.report(json: payload, forChannelName: payload["channel"] as? String)
         }
     }
 
