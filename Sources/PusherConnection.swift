@@ -924,6 +924,7 @@ import Starscream
        if let channel = self.channels.find(name: channelName){
            //TODO: errors
            _ = requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth in
+            print("response from auth endpoint")
                if let pusherAuth = pusherAuth,
                 let decryptionKey = pusherAuth.sharedSecret {
                    self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)

@@ -10,13 +10,18 @@ protocol PusherEventQueue {
 
 // MARK: - Concrete implementation
 
+class ChannelQueue {
+    var queue: [PusherEventPayload] = []
+    var paused: Bool = false
+}
+
 class PusherConcreteEventQueue: PusherEventQueue {
     
     // MARK: - Properties
     
     private let eventFactory: PusherEventFactory
     private let keyProvider: PusherKeyProvider
-    private var queues: [String : [PusherEventPayload]]
+    private var queues: [String : ChannelQueue]
     
     weak var delegate: PusherEventQueueDelegate?
     
@@ -45,47 +50,62 @@ class PusherConcreteEventQueue: PusherEventQueue {
     // MARK: - Private methods
     
     private func enqueue(json: PusherEventPayload, forChannelName channelName: String) {
-        var queue = self.queues[channelName] ?? []
-        queue.append(json)
-        
-        self.queues[channelName] = queue
+        let channelQueue = self.queues[channelName] ?? ChannelQueue()
+        channelQueue.queue.append(json)
+        self.queues[channelName] = channelQueue
     }
     
-    private func flush(channelName: String) {
-        guard var flushedQueue = self.queues[channelName] else {
+    private func flush(channelName: String, resume: Bool = false) {
+        guard let channelQueue = self.queues[channelName] else {
             return
         }
-        
+
+        if channelQueue.paused && !resume {
+            return
+        }
+
         let decryptionKey = self.keyProvider.decryptionKey(forChannelName: channelName)
         var removedIndexes: [Int] = []
         
-        for (index, json) in flushedQueue.enumerated() {
+        for (index, json) in channelQueue.queue.enumerated() {
             do {
                 try self.flush(json: json, forChannelName: channelName, withDecryptionKey: decryptionKey)
                 removedIndexes.append(index)
-            } catch {
-                self.delegate?.eventQueue(self, didFailToDecryptEventForChannelName: channelName)
-                break
-            }
+                channelQueue.paused = false
+            } catch PusherEventError.invalidDecryptionKey {
+                // We only catch `invalidDecryptionKey` errors in order to request a new decryption key. When we encounter `invalidFormat` error we drop the event.
+                if(!channelQueue.paused){
+                    // First failure so pause the queue and make request to auth endpoint
+                    channelQueue.paused = true
+                    self.delegate?.eventQueue(self, didFailToDecryptEventForChannelName: channelName)
+                    break
+                }else{
+                    // We are resuming a paused queue
+                    // This is the second failure, so skip the message and resume queue
+                    print("Skipping message that could not be decrypted")
+                    removedIndexes.append(index)
+                    channelQueue.paused = false
+                }
+            } catch {}
         }
         
         for index in removedIndexes.reversed() {
-            flushedQueue.remove(at: index)
+            channelQueue.queue.remove(at: index)
         }
-        
-        self.queues[channelName] = flushedQueue
+
+        if channelQueue.queue.count == 0 {
+            // Remove empty queues to avoid memory leaking if we unsubscribe from a channel
+            self.queues.removeValue(forKey: channelName)
+        } else {
+            self.queues[channelName] = channelQueue
+        }
+
     }
     
     private func flush(json: PusherEventPayload, forChannelName channelName: String? = nil, withDecryptionKey decryptionKey: String? = nil) throws {
-        do {
-            let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: decryptionKey)
-            self.delegate?.eventQueue(self, didReceiveEvent: event, forChannelName: channelName)
-        } catch PusherEventError.invalidDecryptionKey {
-            // We rethrow only `invalidDecryptionKey` errors in order to request a new decryption key. When we encounter `invalidFormat` error we drop the event.
-            throw PusherEventError.invalidDecryptionKey
-        } catch {}
+        let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: decryptionKey)
+        self.delegate?.eventQueue(self, didReceiveEvent: event, forChannelName: channelName)
     }
-    
 }
 
 // MARK: - Key provider delegate
@@ -93,7 +113,8 @@ class PusherConcreteEventQueue: PusherEventQueue {
 extension PusherConcreteEventQueue: PusherKeyProviderDelegate {
     
     func keyProvider(_ keyProvider: PusherKeyProvider, didUpdateDecryptionKeyForChannelName channelName: String) {
-        self.flush(channelName: channelName)
+        // TODO: make sure this is called for success or failure
+        self.flush(channelName: channelName, resume: true)
     }
 }
 
