@@ -211,7 +211,12 @@ import Starscream
                     "channel": channelName
                 ] as [String : Any]
             )
+
             self.channels.remove(name: channelName)
+            DispatchQueue.main.async {
+                self.eventQueue.removeQueue(forChannelName: channelName)
+                self.keyProvider.clearDecryptionKey(forChannelName: channelName)
+            }
         }
     }
     
@@ -602,10 +607,8 @@ import Starscream
             "channel": channelName,
             "data": data ?? ""
         ]
-        let decryptionKey = self.keyProvider.decryptionKey(forChannelName: channelName)
-        
         do {
-            let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: decryptionKey)
+            let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: nil)
             
             DispatchQueue.main.async {
                 // TODO: Consider removing in favour of exclusively using delegate
@@ -690,10 +693,9 @@ import Starscream
     }
 
     //TODO throw for error?
-    func requestPusherAuthFromAuthMethod(channel: PusherChannel, completionHandler:@escaping (PusherAuth?) -> ()) -> Bool{
+    fileprivate func requestPusherAuthFromAuthMethod(channel: PusherChannel, completionHandler:@escaping (PusherAuth?) -> ()) -> Bool{
         guard let socketId = self.socketId else {
-           print("socketId value not found. You may not be connected.")
-           return false
+            return false
        }
 
         switch self.options.authMethod {
@@ -924,11 +926,12 @@ import Starscream
        if let channel = self.channels.find(name: channelName){
            //TODO: errors
            _ = requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth in
-            print("response from auth endpoint")
-               if let pusherAuth = pusherAuth,
+                if let pusherAuth = pusherAuth,
                 let decryptionKey = pusherAuth.sharedSecret {
-                   self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
-               }
+                    self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
+                }else{
+                    self.keyProvider.clearDecryptionKey(forChannelName: channel.name)
+                }
            }
        }
     }

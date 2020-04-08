@@ -3,7 +3,8 @@ import Foundation
 protocol PusherEventQueue {
     
     var delegate: PusherEventQueueDelegate? { get set }
-    
+
+    func removeQueue(forChannelName channelName: String)
     func report(json: PusherEventPayload, forChannelName channelName: String?)
     
 }
@@ -35,6 +36,10 @@ class PusherConcreteEventQueue: PusherEventQueue {
     }
     
     // MARK: - Event queue
+
+    func removeQueue(forChannelName channelName: String){
+        self.queues.removeValue(forKey: channelName)
+    }
     
     func report(json: PusherEventPayload, forChannelName channelName: String?) {
         if let channelName = channelName {
@@ -93,12 +98,7 @@ class PusherConcreteEventQueue: PusherEventQueue {
             channelQueue.queue.remove(at: index)
         }
 
-        if channelQueue.queue.count == 0 {
-            // Remove empty queues to avoid memory leaking if we unsubscribe from a channel
-            self.queues.removeValue(forKey: channelName)
-        } else {
-            self.queues[channelName] = channelQueue
-        }
+        self.queues[channelName] = channelQueue
 
     }
     
