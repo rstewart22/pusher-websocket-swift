@@ -17,7 +17,7 @@ struct PusherConcreteEventFactory: PusherEventFactory {
     
     // MARK: - Event factory
     
-    func makeEvent(fromJSON json: PusherEventPayload, withDecryptionKey decryptionKey: String?) throws -> PusherEvent {
+    func makeEvent(fromJSON json: PusherEventPayload, withDecryptionKey decryptionKey: String? = nil) throws -> PusherEvent {
         guard let eventName = json["event"] as? String else {
             throw PusherEventError.invalidFormat
         }

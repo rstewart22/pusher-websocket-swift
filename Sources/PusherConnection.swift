@@ -600,24 +600,23 @@ import Starscream
         - parameter channelName: The name of channel for which authorization failed
         - parameter data:        The error returned by the auth endpoint
     */
-    fileprivate func handleAuthorizationError(forChannel channelName: String, response: URLResponse?, data: String?, error: NSError?) {
+    fileprivate func handleAuthorizationError(forChannel channelName: String, error: PusherAuthError) {
         let eventName = "pusher:subscription_error"
         let json = [
             "event": eventName,
             "channel": channelName,
-            "data": data ?? ""
+            "data": error.data ?? ""
         ]
-        do {
-            let event = try self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: nil)
-            
+        if let event = try? self.eventFactory.makeEvent(fromJSON: json, withDecryptionKey: nil){
             DispatchQueue.main.async {
                 // TODO: Consider removing in favour of exclusively using delegate
                 self.handleEvent(event: event)
             }
 
-            self.delegate?.failedToSubscribeToChannel?(name: channelName, response: response, data: data, error: error)
-        } catch {
-            // TODO: Error handling.
+            if let message = error.message{
+                print(message)
+            }
+            self.delegate?.failedToSubscribeToChannel?(name: channelName, response: error.response, data: error.data, error: error.error)
         }
     }
     
@@ -683,29 +682,28 @@ import Starscream
             return true
         } else {
             //TODO  weak self?
-            return requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth in
-                //TODO: Error for no auth value
-                if let pusherAuth = pusherAuth {
+            return requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth, error in
+                if let error = error {
+                    self.handleAuthorizationError(forChannel: channel.name, error: error)
+                }else if let pusherAuth = pusherAuth {
                     self.handleAuthInfo(pusherAuth: pusherAuth, channel: channel)
                 }
             }
         }
     }
 
-    //TODO throw for error?
-    fileprivate func requestPusherAuthFromAuthMethod(channel: PusherChannel, completionHandler:@escaping (PusherAuth?) -> ()) -> Bool{
+    fileprivate func requestPusherAuthFromAuthMethod(channel: PusherChannel, completionHandler:@escaping (PusherAuth?, PusherAuthError?) -> ()) -> Bool{
         guard let socketId = self.socketId else {
+            let message = "socketId value not found. You may not be connected."
+            completionHandler(nil, PusherAuthError(kind: .notConnected, message: message))
             return false
-       }
+        }
 
         switch self.options.authMethod {
         case .noMethod:
             let errorMessage = "Authentication method required for private / presence channels but none provided."
             let error = NSError(domain: "com.pusher.PusherSwift", code: 0, userInfo: [NSLocalizedFailureReasonErrorKey: errorMessage])
-
-            print(errorMessage)
-
-            handleAuthorizationError(forChannel: channel.name, response: nil, data: nil, error: error)
+            completionHandler(nil, PusherAuthError(kind: .noMethod, message: errorMessage, error: error))
             return false
         case .endpoint(authEndpoint: let authEndpoint):
             let request = requestForAuthValue(from: authEndpoint, socketId: socketId, channelName: channel.name)
@@ -718,11 +716,13 @@ import Starscream
             } else {
                 let errorMessage = "Authentication request could not be built"
                 let error = NSError(domain: "com.pusher.PusherSwift", code: 0, userInfo: [NSLocalizedFailureReasonErrorKey: errorMessage])
-                handleAuthorizationError(forChannel: channel.name, response: nil, data: nil, error: error)
+                completionHandler(nil, PusherAuthError(kind:.couldNotBuildRequest, message: errorMessage, error: error))
                 return false
             }
         case .authorizer(authorizer: let authorizer):
-            authorizer.fetchAuthValue(socketID: socketId, channelName: channel.name, completionHandler: completionHandler)
+            authorizer.fetchAuthValue(socketID: socketId, channelName: channel.name){ pusherAuth in
+                completionHandler(pusherAuth, nil)
+            }
             return true
         case .inline(secret: let secret):
             var message = ""
@@ -745,7 +745,7 @@ import Starscream
                 pusherAuth = PusherAuth(auth: auth, channelData: channelData)
             }
 
-            completionHandler(pusherAuth)
+            completionHandler(pusherAuth, nil)
             return true
         }
     }
@@ -814,36 +814,36 @@ import Starscream
         - parameter request: The request to send
         - parameter channel: The PusherChannel to authenticate subsciption for
     */
-    fileprivate func sendAuthorisationRequest(request: URLRequest, channel: PusherChannel, completionHandler: @escaping (PusherAuth?) -> ()) {
+    fileprivate func sendAuthorisationRequest(request: URLRequest, channel: PusherChannel, completionHandler: @escaping (PusherAuth?, PusherAuthError?) -> ()) {
         let task = URLSession.dataTask(with: request, completionHandler: { data, response, sessionError in
             if let error = sessionError {
-                print("Error authorizing channel [\(channel.name)]: \(error)")
-                self.handleAuthorizationError(forChannel: channel.name, response: response, data: nil, error: error as NSError?)
+                let message = "Error authorizing channel [\(channel.name)]: \(error)"
+                completionHandler(nil, PusherAuthError(kind: .requestFailure, message: message, response: response, error: error as NSError?))
                 return
             }
 
             guard let data = data else {
-                print("Error authorizing channel [\(channel.name)]")
-                self.handleAuthorizationError(forChannel: channel.name, response: response, data: nil, error: nil)
+                let message = "Error authorizing channel [\(channel.name)]"
+                completionHandler(nil, PusherAuthError(kind: .invalidAuthResponse, message: message, response: response))
                 return
             }
 
             guard let httpResponse = response as? HTTPURLResponse, (httpResponse.statusCode == 200 || httpResponse.statusCode == 201) else {
                 let dataString = String(data: data, encoding: String.Encoding.utf8)
-                print ("Error authorizing channel [\(channel.name)]: \(String(describing: dataString))")
-                self.handleAuthorizationError(forChannel: channel.name, response: response, data: dataString, error: nil)
+                let message = "Error authorizing channel [\(channel.name)]: \(String(describing: dataString))"
+                completionHandler(nil, PusherAuthError(kind: .invalidAuthResponse, message: message, response: response, data: dataString))
                 return
             }
 
             guard let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []), let json = jsonObject as? [String: AnyObject] else {
-                print("Error authorizing channel [\(channel.name)]")
-                self.handleAuthorizationError(forChannel: channel.name, response: httpResponse, data: nil, error: nil)
+                let message = "Error authorizing channel [\(channel.name)]: Could not parse response from auth endpoint"
+                completionHandler(nil, PusherAuthError(kind: .invalidAuthResponse, message: message, response: httpResponse))
                 return
             }
 
             guard let auth = json["auth"] as? String else {
-                print("Error authorizing channel [\(channel.name)]")
-                self.handleAuthorizationError(forChannel: channel.name, response: httpResponse, data: nil, error: nil)
+                let message = "Error authorizing channel [\(channel.name)]: No auth field in response"
+                completionHandler(nil, PusherAuthError(kind: .invalidAuthResponse, message: message, response: httpResponse))
                 return
             }
 
@@ -853,7 +853,7 @@ import Starscream
                 sharedSecret: json["shared_secret"] as? String
             )
 
-            completionHandler(pusherAuth)
+            completionHandler(pusherAuth, nil)
         })
 
         task.resume()
@@ -924,10 +924,11 @@ import Starscream
 
     func eventQueue(_ eventQueue: PusherEventQueue, didFailToDecryptEventForChannelName channelName: String) {
        if let channel = self.channels.find(name: channelName){
-           //TODO: errors
-           _ = requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth in
+           _ = requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth, error in
                 if let pusherAuth = pusherAuth,
-                let decryptionKey = pusherAuth.sharedSecret {
+                    let decryptionKey = pusherAuth.sharedSecret,
+                    error == nil
+                {
                     self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
                 }else{
                     self.keyProvider.clearDecryptionKey(forChannelName: channel.name)
@@ -935,6 +936,24 @@ import Starscream
            }
        }
     }
+}
+
+internal struct PusherAuthError: Error {
+    enum Kind {
+        case notConnected
+        case noMethod
+        case couldNotBuildRequest
+        case invalidAuthResponse
+        case requestFailure
+    }
+
+    let kind: Kind
+
+    var message: String? = nil
+
+    var response: URLResponse? = nil
+    var data: String? = nil
+    var error: NSError? = nil
 }
 
 @objc public class PusherAuth: NSObject {

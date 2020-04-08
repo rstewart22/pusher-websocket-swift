@@ -42,6 +42,7 @@ class PusherConcreteEventQueue: PusherEventQueue {
     }
     
     func report(json: PusherEventPayload, forChannelName channelName: String?) {
+
         if let channelName = channelName {
             self.enqueue(json: json, forChannelName: channelName)
             self.flush(channelName: channelName)
