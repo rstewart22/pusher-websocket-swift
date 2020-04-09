@@ -3,7 +3,7 @@ import Reachability
 import Starscream
 
 @objcMembers
-@objc open class PusherConnection: NSObject, PusherEventQueueDelegate {
+@objc open class PusherConnection: NSObject {
     public let url: String
     public let key: String
     open var options: PusherClientOptions
@@ -681,12 +681,11 @@ import Starscream
             }
             return true
         } else {
-            //TODO  weak self?
-            return requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth, error in
+            return requestPusherAuthFromAuthMethod(channel: channel) { [weak self] pusherAuth, error in
                 if let error = error {
-                    self.handleAuthorizationError(forChannel: channel.name, error: error)
+                    self?.handleAuthorizationError(forChannel: channel.name, error: error)
                 }else if let pusherAuth = pusherAuth {
-                    self.handleAuthInfo(pusherAuth: pusherAuth, channel: channel)
+                    self?.handleAuthInfo(pusherAuth: pusherAuth, channel: channel)
                 }
             }
         }
@@ -917,24 +916,31 @@ import Starscream
             ]
         )
     }
-    
+}
+
+extension PusherConnection: PusherEventQueueDelegate {
+
     func eventQueue(_ eventQueue: PusherEventQueue, didReceiveEvent event: PusherEvent, forChannelName channelName: String?) {
-        self.handleEvent(event: event)
+       self.handleEvent(event: event)
     }
 
-    func eventQueue(_ eventQueue: PusherEventQueue, didFailToDecryptEventForChannelName channelName: String) {
+    func eventQueue(_ eventQueue: PusherEventQueue, reloadDecryptionKeySyncForChannelName channelName: String) {
+       let group = DispatchGroup()
        if let channel = self.channels.find(name: channelName){
-           _ = requestPusherAuthFromAuthMethod(channel: channel) { pusherAuth, error in
-                if let pusherAuth = pusherAuth,
-                    let decryptionKey = pusherAuth.sharedSecret,
-                    error == nil
-                {
-                    self.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
-                }else{
-                    self.keyProvider.clearDecryptionKey(forChannelName: channel.name)
-                }
+           group.enter()
+           _ = requestPusherAuthFromAuthMethod(channel: channel) { [weak self] pusherAuth, error in
+               if let pusherAuth = pusherAuth,
+                   let decryptionKey = pusherAuth.sharedSecret,
+                   error == nil
+               {
+                   self?.keyProvider.setDecryptionKey(decryptionKey, forChannelName: channel.name)
+               }else{
+                   self?.keyProvider.clearDecryptionKey(forChannelName: channel.name)
+               }
+               group.leave()
            }
        }
+       group.wait()
     }
 }
 
